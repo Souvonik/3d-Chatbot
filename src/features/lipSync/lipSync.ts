@@ -45,16 +45,36 @@ export class LipSync {
   }
 
   public async playFromArrayBuffer(buffer: ArrayBuffer, onEnded?: () => void) {
-    const audioBuffer = await this.audio.decodeAudioData(buffer);
+    try {
+      console.log('LipSync: Starting audio playback, buffer size:', buffer.byteLength);
+      
+      // Resume audio context if it's suspended
+      if (this.audio.state === 'suspended') {
+        console.log('LipSync: Resuming audio context');
+        await this.audio.resume();
+      }
+      
+      const audioBuffer = await this.audio.decodeAudioData(buffer);
+      console.log('LipSync: Audio buffer decoded successfully');
 
-    const bufferSource = this.audio.createBufferSource();
-    bufferSource.buffer = audioBuffer;
+      const bufferSource = this.audio.createBufferSource();
+      bufferSource.buffer = audioBuffer;
 
-    bufferSource.connect(this.audio.destination);
-    bufferSource.connect(this.analyser);
-    bufferSource.start();
-    if (onEnded) {
-      bufferSource.addEventListener("ended", onEnded);
+      bufferSource.connect(this.audio.destination);
+      bufferSource.connect(this.analyser);
+      
+      console.log('LipSync: Starting audio playback');
+      bufferSource.start();
+      
+      if (onEnded) {
+        bufferSource.addEventListener("ended", () => {
+          console.log('LipSync: Audio playback ended');
+          onEnded();
+        });
+      }
+    } catch (error) {
+      console.error('LipSync: Error during audio playback:', error);
+      if (onEnded) onEnded();
     }
   }
 

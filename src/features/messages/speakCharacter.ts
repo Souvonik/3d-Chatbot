@@ -18,6 +18,9 @@ const createSpeakCharacter = () => {
     onStart?: () => void,
     onComplete?: () => void
   ) => {
+    console.log('speakCharacter: Called with screenplay:', screenplay);
+    console.log('speakCharacter: ElevenLabs key:', elevenLabsKey ? 'Set' : 'Not set');
+    
     const fetchPromise = prevFetchPromise.then(async () => {
       const now = Date.now();
       if (now - lastTime < 1000) {
@@ -26,25 +29,33 @@ const createSpeakCharacter = () => {
 
       // if elevenLabsKey is not set, do not fetch audio
       if (!elevenLabsKey || elevenLabsKey.trim() == "") {
-        console.log("elevenLabsKey is not set");
+        console.log("speakCharacter: elevenLabsKey is not set");
         return null;
       }
 
-      const buffer = await fetchAudio(screenplay.talk, elevenLabsKey, elevenLabsParam).catch(() => null);
+      console.log('speakCharacter: Fetching audio...');
+      const buffer = await fetchAudio(screenplay.talk, elevenLabsKey, elevenLabsParam).catch((error) => {
+        console.error('speakCharacter: Error fetching audio:', error);
+        return null;
+      });
       lastTime = Date.now();
+      console.log('speakCharacter: Audio fetched, buffer size:', buffer?.byteLength || 0);
       return buffer;
     });
 
     prevFetchPromise = fetchPromise;
     prevSpeakPromise = Promise.all([fetchPromise, prevSpeakPromise]).then(([audioBuffer]) => {
+      console.log('speakCharacter: Starting speech with buffer size:', audioBuffer?.byteLength || 0);
       onStart?.();
       if (!audioBuffer) {
+        console.log('speakCharacter: No audio buffer, speaking without audio');
         // pass along screenplay to change avatar expression
         return viewer.model?.speak(null, screenplay);
       }
       return viewer.model?.speak(audioBuffer, screenplay);
     });
     prevSpeakPromise.then(() => {
+      console.log('speakCharacter: Speech completed');
       onComplete?.();
     });
   };
@@ -57,6 +68,8 @@ export const fetchAudio = async (
   elevenLabsKey: string,
   elevenLabsParam: ElevenLabsParam,
   ): Promise<ArrayBuffer> => {
+  console.log('fetchAudio: Starting TTS request for message:', talk.message);
+  
   const ttsVoice = await synthesizeVoice(
     talk.message,
     talk.speakerX,
@@ -65,13 +78,32 @@ export const fetchAudio = async (
     elevenLabsKey,
     elevenLabsParam
   );
-  const url = ttsVoice.audio;
+  const dataUrl = ttsVoice.audio;
 
-  if (url == null) {
+  if (dataUrl == null) {
     throw new Error("Something went wrong");
   }
 
-  const resAudio = await fetch(url);
+  console.log('fetchAudio: TTS response received, data URL length:', dataUrl.length);
+
+  // Handle data URL format: data:audio/mpeg;base64,<base64data>
+  if (dataUrl.startsWith('data:audio/mpeg;base64,')) {
+    const base64Data = dataUrl.split(',')[1];
+    console.log('fetchAudio: Processing base64 data, length:', base64Data.length);
+    
+    const binaryString = atob(base64Data);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    
+    console.log('fetchAudio: Converted to ArrayBuffer, size:', bytes.buffer.byteLength);
+    return bytes.buffer;
+  }
+
+  // Fallback to fetch if it's a regular URL
+  console.log('fetchAudio: Using fallback fetch for URL');
+  const resAudio = await fetch(dataUrl);
   const buffer = await resAudio.arrayBuffer();
   return buffer;
 };

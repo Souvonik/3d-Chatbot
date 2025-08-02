@@ -1,76 +1,36 @@
 import { Message } from "../messages/messages";
-import { getWindowAI } from 'window.ai';
-
-export async function getChatResponse(messages: Message[], apiKey: string) {
-  // function currently not used
-  throw new Error("Not implemented");
-
-  /*
-  if (!apiKey) {
-    throw new Error("Invalid API Key");
-  }
-
-  const configuration = new Configuration({
-    apiKey: apiKey,
-  });
-  // ブラウザからAPIを叩くときに発生するエラーを無くすworkaround
-  // https://github.com/openai/openai-node/issues/6#issuecomment-1492814621
-  delete configuration.baseOptions.headers["User-Agent"];
-
-  const openai = new OpenAIApi(configuration);
-
-  const { data } = await openai.createChatCompletion({
-    model: "gpt-3.5-turbo",
-    messages: messages,
-  });
-
-  const [aiRes] = data.choices;
-  const message = aiRes.message?.content || "エラーが発生しました";
-
-  return { message: message };
-  */
-}
-
 export async function getChatResponseStream(
   messages: Message[],
   apiKey: string,
   openRouterKey: string
 ) {
-  // TODO: remove usages of apiKey in code
-  /*
-  if (!apiKey) {
-    throw new Error("Invalid API Key");
-  }
-  */
-
-  console.log('getChatResponseStream');
-
-  console.log('messages');
-  console.log(messages);
+  console.log('Starting getChatResponseStream');
+  console.log('Using model: google/gemini-2.0-flash-exp:free');
 
   const stream = new ReadableStream({
     async start(controller: ReadableStreamDefaultController) {
       try {
+        console.log('Initializing stream controller');
+        
+        const OPENROUTER_API_KEY = openRouterKey;
+        if (!OPENROUTER_API_KEY) {
+          throw new Error('No OpenRouter API key provided');
+        }
 
-        const OPENROUTER_API_KEY = "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";
-        const YOUR_SITE_URL = 'https://chat-vrm-window.vercel.app/';
-        const YOUR_SITE_NAME = 'ChatVRM';
+        const YOUR_SITE_URL = 'http://localhost:3000'; // Update for local testing
+        const YOUR_SITE_NAME = 'ChatVRM Local';
 
-        let isStreamed = false;
-        const generation = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        console.log('Preparing API request');
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
           method: "POST",
           headers: {
             "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-            "HTTP-Referer": `${YOUR_SITE_URL}`, // Optional, for including your app on openrouter.ai rankings.
-            "X-Title": `${YOUR_SITE_NAME}`, // Optional. Shows in rankings on openrouter.ai.
+            "HTTP-Referer": `${YOUR_SITE_URL}`,
+            "X-Title": `${YOUR_SITE_NAME}`,
             "Content-Type": "application/json"
           },
           body: JSON.stringify({
-            // "model": "cohere/command",
-            // "model": "openai/gpt-3.5-turbo",
-            // "model": "cohere/command-r-plus",
-            // "model": "anthropic/claude-3.5-sonnet:beta",
-            "model": "google/gemini-2.0-flash-exp:free",
+            "model": "anthropic/claude-3-haiku", // More reliable free model
             "messages": messages,
             "temperature": 0.7,
             "max_tokens": 200,
@@ -78,88 +38,65 @@ export async function getChatResponseStream(
           })
         });
 
-        if (generation.body) {
-          const reader = generation.body.getReader();
-          try {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
+        console.log('API response status:', response.status);
+        
+        if (!response.ok) {
+          const errorBody = await response.text();
+          console.error('API Error:', errorBody);
+          throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+        }
 
-              // console.log('value');
-              // console.log(value);
+        if (!response.body) {
+          throw new Error('No response body received');
+        }
 
-              // Assuming the stream is text, convert the Uint8Array to a string
-              let chunk = new TextDecoder().decode(value);
-              // Process the chunk here (e.g., append it to the controller for streaming to the client)
-              // console.log(chunk); // Or handle the chunk as needed
+        console.log('Starting to process stream');
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
 
-              // split the chunk into lines
-              let lines = chunk.split('\n');
-              // console.log('lines');
-              // console.log(lines);
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              console.log('Stream completed');
+              break;
+            }
 
-              const SSE_COMMENT = ": OPENROUTER PROCESSING";
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ''; // Keep incomplete line in buffer
 
-
-              // filter out lines that start with SSE_COMMENT
-              lines = lines.filter((line) => !line.trim().startsWith(SSE_COMMENT));
-
-              // filter out lines that end with "data: [DONE]"
-              lines = lines.filter((line) => !line.trim().endsWith("data: [DONE]"));
-
-              // Filter out empty lines and lines that do not start with "data:"
-              const dataLines = lines.filter(line => line.startsWith("data:"));
-
-              // Extract and parse the JSON from each data line
-              const messages = dataLines.map(line => {
-                // Remove the "data: " prefix and parse the JSON
-                const jsonStr = line.substring(5); // "data: ".length == 5
-                return JSON.parse(jsonStr);
-              });
-
-              // console.log('messages');
-              // console.log(messages);
-
-              // loop through messages and enqueue them to the controller
-
-              try {
-                messages.forEach((message) => {
-                  const content = message.choices[0].delta.content;
-
-                  controller.enqueue(content);
-                });
-              } catch (error) {
-                // log the messages
-                console.log('error processing messages:');
-                console.log(messages);
-
-                throw error;
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed || trimmed.startsWith(':') || trimmed === 'data: [DONE]') {
+                continue;
               }
 
-              // Parse the chunk as JSON
-              // const parsedChunk = JSON.parse(chunk);
-              // Access the content
-              // const content = parsedChunk.choices[0].delta.content;
-              // console.log(content); // Use the content as needed
-
-              // enqueue the content to the controller
-              // controller.enqueue(content);
-
-              isStreamed = true;
+              if (trimmed.startsWith('data:')) {
+                try {
+                  const jsonStr = trimmed.substring(5).trim();
+                  if (jsonStr) {
+                    const data = JSON.parse(jsonStr);
+                    if (data.choices?.[0]?.delta?.content) {
+                      controller.enqueue(data.choices[0].delta.content);
+                    }
+                  }
+                } catch (error) {
+                  console.error('Error parsing line:', trimmed, '\nError:', error);
+                }
+              }
             }
-          } catch (error) {
-            console.error('Error reading the stream', error);
-          } finally {
-            reader.releaseLock();
           }
-        }
-
-        // handle case where streaming is not supported
-        if (!isStreamed) {
-          console.error('Streaming not supported! Need to handle this case.');
-          // controller.enqueue(response[0].message.content);
+        } finally {
+          reader.releaseLock();
         }
       } catch (error) {
+        console.error('Stream error:', error);
+        // Provide more specific error message
+        controller.enqueue("Sorry, I'm having trouble responding right now. ");
+        controller.enqueue("Please check your API key and connection. ");
+        controller.enqueue(`Error details: ${error instanceof Error ? error.message : String(error)}`);
         controller.error(error);
       } finally {
         controller.close();

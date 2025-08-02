@@ -16,13 +16,23 @@ export class Model {
   public emoteController?: EmoteController;
 
   private _lookAtTargetParent: THREE.Object3D;
-  private _lipSync?: LipSync;
+  public _lipSync?: LipSync;
 
   private prevPlayedEmotion: string | null = null;
 
   constructor(lookAtTargetParent: THREE.Object3D) {
     this._lookAtTargetParent = lookAtTargetParent;
     this._lipSync = new LipSync(new AudioContext());
+    
+    // Resume audio context if it's suspended (needed for autoplay policy)
+    if (this._lipSync.audio.state === 'suspended') {
+      console.log('Audio context is suspended, attempting to resume...');
+      this._lipSync.audio.resume().then(() => {
+        console.log('Audio context resumed successfully');
+      }).catch(error => {
+        console.error('Failed to resume audio context:', error);
+      });
+    }
   }
 
   public async loadVRM(url: string): Promise<void> {
@@ -75,18 +85,25 @@ export class Model {
    * 音声を再生し、リップシンクを行う
    */
   public async speak(buffer: ArrayBuffer | null, screenplay: Screenplay) {
+    console.log('Model.speak: Called with buffer size:', buffer?.byteLength || 0);
+    console.log('Model.speak: Screenplay:', screenplay);
+    
     // prevent flickering of avatar expression
     if (this.prevPlayedEmotion !== screenplay.expression) {
+      console.log('Model.speak: Playing emotion:', screenplay.expression);
       this.emoteController?.playEmotion(screenplay.expression);
       this.prevPlayedEmotion = screenplay.expression;
     }
 
     if (!buffer) {
+      console.log('Model.speak: No buffer provided, skipping audio playback');
       return;
     }
 
+    console.log('Model.speak: Starting lip sync playback');
     await new Promise((resolve) => {
       this._lipSync?.playFromArrayBuffer(buffer, () => {
+        console.log('Model.speak: Lip sync playback completed');
         resolve(true);
       });
     });
@@ -100,18 +117,18 @@ export class Model {
       let expression = this.vrm?.expressionManager?.getExpression("JawOpen");
       if (expression) {
         // Enhanced lip sync with multiple mouth shapes
-        this.emoteController?.lipSync("JawOpen", volume);
+        this.emoteController?.lipSync("JawOpen" as any, volume);
         
         // Add additional mouth movements for more realistic lip sync
         const mouthStretch = this.vrm?.expressionManager?.getExpression("MouthStretch");
         if (mouthStretch) {
-          this.emoteController?.lipSync("MouthStretch", volume * 0.3);
+          this.emoteController?.lipSync("MouthStretch" as any, volume * 0.3);
         }
         
         // Add lip puckering for certain sounds
         const mouthPucker = this.vrm?.expressionManager?.getExpression("MouthPucker");
         if (mouthPucker) {
-          this.emoteController?.lipSync("MouthPucker", volume * 0.2);
+          this.emoteController?.lipSync("MouthPucker" as any, volume * 0.2);
         }
       } else {
         // Fallback for VRM models without JawOpen

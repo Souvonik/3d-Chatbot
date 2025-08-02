@@ -20,6 +20,8 @@ export async function synthesizeVoice(
   const VOICE_ID = elevenLabsParam.voiceId;
 
   console.log('elevenlabs voice_id: ' + VOICE_ID);
+  console.log('elevenlabs api_key: ' + (API_KEY ? 'Set' : 'Not set'));
+  console.log('elevenlabs message: ' + message);
 
   // Set options for the API request.
   const options = {
@@ -36,19 +38,29 @@ export async function synthesizeVoice(
     responseType: 'arraybuffer', // Set the responseType to arraybuffer to receive binary data as response.
   };
 
-  // Send the API request using Axios and wait for the response.
-  // @ts-ignore
-  const speechDetails = await axios.request(options);
-  // Get the binary audio data received from the API response.
-  const data =  speechDetails.data;
-  // Create a new Blob object from the audio data with MIME type 'audio/mpeg'
-  const blob = new Blob([data], { type: 'audio/mpeg' });
-  // Create a URL for the blob object
-  const url = URL.createObjectURL(blob);
+  try {
+    // Send the API request using Axios and wait for the response.
+    // @ts-ignore
+    const speechDetails = await axios.request(options);
+    // Get the binary audio data received from the API response.
+    const data = speechDetails.data;
+    
+    console.log('ElevenLabs API response received, data size:', data.byteLength);
+    
+    // Convert the array buffer to base64
+    const base64Audio = Buffer.from(data).toString('base64');
+    
+    // Create a data URL for the audio
+    const dataUrl = `data:audio/mpeg;base64,${base64Audio}`;
 
-  return {
-    audio: url
-  };
+    console.log('ElevenLabs audio data URL created successfully');
+    return {
+      audio: dataUrl
+    };
+  } catch (error) {
+    console.error('ElevenLabs API error:', error);
+    throw error;
+  }
 }
 
 export async function getVoices(elevenLabsKey: string) {

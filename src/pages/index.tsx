@@ -21,7 +21,7 @@ import { buildUrl } from "@/utils/buildUrl";
 import { websocketService } from '../services/websocketService';
 import { MessageMiddleOut } from "@/features/messages/messageMiddleOut";
 import { ResponseTimeIndicator } from "@/components/responseTimeIndicator";
-import { ResponseTimeTracker } from "@/utils/responseTimeTracker";
+import { ResponseTimeTracker, ResponseTimeData } from "@/utils/responseTimeTracker";
 
 const m_plus_2 = M_PLUS_2({
   variable: "--font-m-plus-2",
@@ -59,14 +59,12 @@ export default function Home() {
   const [openRouterKey, setOpenRouterKey] = useState<string>(() => {
     // Try to load from localStorage on initial render
     if (typeof window !== 'undefined') {
-      return localStorage.getItem('openRouterKey') || '';
+      return localStorage.getItem('openRouterKey') || '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';
     }
-    return '';
+    return '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';
   });
   const [responseTimeTracker] = useState(() => new ResponseTimeTracker());
-  const [responseTimeData, setResponseTimeData] = useState({
-    llmResponseTime: undefined,
-    ttsResponseTime: undefined,
+  const [responseTimeData, setResponseTimeData] = useState<ResponseTimeData>({
     isProcessing: false
   });
   
@@ -89,11 +87,19 @@ export default function Home() {
     if (window.localStorage.getItem("elevenLabsKey")) {
       const key = window.localStorage.getItem("elevenLabsKey") as string;
       setElevenLabsKey(key);
+    } else {
+      // Set the provided ElevenLabs API key
+      setElevenLabsKey("sk_6b852b7169387aa0eda03078183f428c49f3e03bdd946963");
+      localStorage.setItem("elevenLabsKey", "sk_6b852b7169387aa0eda03078183f428c49f3e03bdd946963");
     }
     // load openrouter key from localStorage
     const savedOpenRouterKey = localStorage.getItem('openRouterKey');
     if (savedOpenRouterKey) {
       setOpenRouterKey(savedOpenRouterKey);
+    } else {
+      // Set the provided OpenRouter API key
+      setOpenRouterKey('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');
+      localStorage.setItem('openRouterKey', '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');
     }
     const savedBackground = localStorage.getItem('backgroundImage');
     if (savedBackground) {
@@ -123,6 +129,31 @@ export default function Home() {
       document.body.style.backgroundImage = `url(${buildUrl("/bg-c.png")})`;
     }
   }, [backgroundImage]);
+
+  // Resume audio context on user interaction
+  useEffect(() => {
+    const handleUserInteraction = () => {
+      if (viewer?.model?._lipSync?.audio.state === 'suspended') {
+        console.log('Resuming audio context on user interaction');
+        viewer.model._lipSync.audio.resume().then(() => {
+          console.log('Audio context resumed successfully');
+        }).catch(error => {
+          console.error('Failed to resume audio context:', error);
+        });
+      }
+    };
+
+    // Add event listeners for user interaction
+    document.addEventListener('click', handleUserInteraction);
+    document.addEventListener('keydown', handleUserInteraction);
+    document.addEventListener('touchstart', handleUserInteraction);
+
+    return () => {
+      document.removeEventListener('click', handleUserInteraction);
+      document.removeEventListener('keydown', handleUserInteraction);
+      document.removeEventListener('touchstart', handleUserInteraction);
+    };
+  }, [viewer]);
 
   const handleChangeChatLog = useCallback(
     (targetIndex: number, text: string) => {
@@ -227,6 +258,9 @@ export default function Home() {
         localOpenRouterKey = process.env.NEXT_PUBLIC_OPENROUTER_API_KEY!;
       }
 
+      console.log('Using OpenRouter key:', localOpenRouterKey ? 'Set' : 'Not set');
+      console.log('Using ElevenLabs key:', elevenLabsKey ? 'Set' : 'Not set');
+
       const stream = await getChatResponseStream(processedMessages, openAiKey, localOpenRouterKey).catch(
         (e) => {
           console.error(e);
@@ -288,6 +322,8 @@ export default function Home() {
           );
           
           console.log('Sentence match result:', sentenceMatch);
+          console.log('Current receivedMessage:', receivedMessage);
+          
           if (sentenceMatch && sentenceMatch[0]) {
             const sentence = sentenceMatch[0];
             sentences.push(sentence);
@@ -306,6 +342,7 @@ export default function Home() {
                 ""
               )
             ) {
+              console.log('Skipping empty sentence');
               continue;
             }
 
@@ -314,21 +351,41 @@ export default function Home() {
             aiTextLog += aiText;
             hasProcessedAnyContent = true;
 
+            console.log('Processing sentence for TTS:', sentence);
+            console.log('Generated aiTalks:', aiTalks);
+            console.log('ElevenLabs key available:', !!elevenLabsKey);
+
             // 文ごとに音声を生成 & 再生、返答を表示
             const currentAssistantMessage = sentences.join(" ");
             setAssistantMessage(currentAssistantMessage); // Always update the message immediately
             
-            handleSpeakAi(aiTalks[0], elevenLabsKey, elevenLabsParam, () => {
-              // Audio playback started callback
-            });
+            if (aiTalks[0]) {
+              console.log('Calling handleSpeakAi with:', aiTalks[0]);
+              handleSpeakAi(aiTalks[0], elevenLabsKey, elevenLabsParam, () => {
+                console.log('TTS playback started');
+                // Audio playback started callback
+              });
+            } else {
+              console.log('No aiTalks generated, skipping TTS');
+            }
           } else {
             // If no sentence match but we have content, still update the message
             // This handles cases where the response doesn't end with punctuation
             if (receivedMessage.trim() && !hasProcessedAnyContent) {
+              console.log('No sentence match, but processing remaining content:', receivedMessage.trim());
               const fullMessage = `${tag} ${receivedMessage.trim()}`;
               aiTextLog = fullMessage;
               setAssistantMessage(fullMessage);
               hasProcessedAnyContent = true;
+              
+              // Also try to process this for TTS
+              const aiTalks = textsToScreenplay([fullMessage], koeiroParam);
+              if (aiTalks[0]) {
+                console.log('Calling handleSpeakAi for remaining content with:', aiTalks[0]);
+                handleSpeakAi(aiTalks[0], elevenLabsKey, elevenLabsParam, () => {
+                  console.log('TTS playback started for remaining content');
+                });
+              }
             }
           }
         }
@@ -431,6 +488,22 @@ export default function Home() {
     localStorage.setItem('openRouterKey', newKey);
   };
 
+  const handleResumeAudio = () => {
+    if (viewer?.model?._lipSync?.audio.state === 'suspended') {
+      console.log('Manually resuming audio context');
+      viewer.model._lipSync.audio.resume().then(() => {
+        console.log('Audio context resumed successfully');
+        alert('Audio context resumed!');
+      }).catch(error => {
+        console.error('Failed to resume audio context:', error);
+        alert('Failed to resume audio context: ' + error.message);
+      });
+    } else {
+      console.log('Audio context is already running');
+      alert('Audio context is already running');
+    }
+  };
+
   return (
     <div className={`${m_plus_2.variable} ${montserrat.variable}`}>
       <Meta />
@@ -439,6 +512,24 @@ export default function Home() {
         ttsResponseTime={responseTimeData.ttsResponseTime}
         isProcessing={responseTimeData.isProcessing}
       />
+      {/* Debug button for audio context */}
+      <button 
+        onClick={handleResumeAudio}
+        style={{
+          position: 'fixed',
+          top: '10px',
+          right: '10px',
+          zIndex: 1000,
+          padding: '5px 10px',
+          backgroundColor: '#007bff',
+          color: 'white',
+          border: 'none',
+          borderRadius: '3px',
+          cursor: 'pointer'
+        }}
+      >
+        Resume Audio
+      </button>
       {/*<Introduction
         openAiKey={openAiKey}
         onChangeAiKey={setOpenAiKey}
